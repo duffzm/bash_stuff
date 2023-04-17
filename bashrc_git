@@ -1,0 +1,303 @@
+eval "$(hub alias -s)"
+alias gitdiffe='vim `git diff --name-only | uniq`'
+alias gitsize='git count-objects -vH'
+alias gitbfg='java -jar ~/.local/bin/bfg.jar'
+alias pre-commit-all='pre-commit run --all-files'
+function gitrevertfile(){
+    if [[ "$1" == '--help' ]]; then
+        echo 'revert file to specific point in time'
+        echo '$1 - ""=HEAD or specify remote/branch'
+        echo '$2 - file to restore'
+        return
+    fi
+    source=''
+    if [[ "$1" == '' ]]; then
+        source='HEAD'
+    else
+        source=$1
+    fi
+    git checkout $source -- $2
+}
+function gitls(){
+    branch="$(git rev-parse --abbrev-ref HEAD)"
+    git ls-tree -r $branch $*
+}
+function gits(){
+  git status -u
+}
+function gitdiff(){
+  git diff $*
+}
+function gitbranchc(){
+    gitbrancha | grep "*"|awk '{print $2}'
+}
+function gitbrancha(){
+    git branch -a
+}
+function gitbranchdf(){
+    git branch -D $*
+}
+function gitbranchd(){
+    git branch -d $*
+}
+function gitbranchdr(){
+    gitbranchd $*
+    git branch -dr origin/$*
+}
+function gitbranchdrf(){
+    gitbranchdf $*
+    git branch -dr origin/$*
+}
+function gitbranchmv(){
+    if [[ ${1} == "--help" ]]; then
+        echo "gitbranchmv <oldbranch> <newbranch>"
+        return
+    fi
+    oldbranch=$1
+    newbranch=$2
+    if [[ -z ${newbranch} || ${newbranch} == "" ]]; then newbranch=${1}; oldbranch=""; fi
+    if [[ ${oldbranch} == "" ]]; then oldbranch=$(gitbranchprint); fi
+    echo "renaming oldbranch=${oldbranch} to newbranch=${newbranch}"
+    # change local branch name
+    branchlocal_return=0
+    if [[ "$(gitbranchprint)" == "${oldbranch}" ]]; then
+        branchlocal_return=$(git branch -m ${newbranch})
+    else
+        branchlocal_return=$(git branch -m ${oldbranch} ${newbranch})
+    fi
+    if [[ ${branchlocal_return} -ne 0 ]]; then echo "local branch rename failed"; return 1; fi
+    # change remote branch
+    echo "git push origin :${oldbranch} ${newbranch}"
+    git push origin :${oldbranch} ${newbranch}
+    echo "git push orgin -u ${newbranch}"
+    git push origin -u ${newbranch}
+}
+function gitbranchprint(){
+    git rev-parse --abbrev-ref HEAD
+}
+function gitbranchupstream(){
+    # $1 string remote/branch
+    if [[ "${1}" == '' ]]; then
+        echo "gitbranchupstream <remote>/<branch>"
+    fi
+    git branch --set-upstream-to=${1} $(git branch | grep \* | cut -d ' ' -f2)
+}
+function gitbranchunsetupstream(){
+    git branch --unset-upstream
+}
+function gitl(){
+  git log --pretty=format:"%h %s" --graph
+}
+function gitll(){
+  git log
+}
+function gitfetch(){
+  #git pull
+  git fetch --all
+  gitprune
+} # end function gitfetch
+function gitprune(){
+  if [[ ! -e .git/config ]]; then echo "Git Config not found exiting"; return; fi
+  for i in $(grep -E '^\[remote' .git/config |awk '{ gsub("\"|]","");print $2}'); do
+    prune=$(git remote prune origin)
+    prune_return=$?
+    echo ${prune}
+    if [[ ! ${prune_return} ]]; then
+      return
+    fi
+    echo "${prune}" | grep '[pruned]' | awk '{print $3}'
+    items=$(echo "${prune}" | grep '[pruned]' | awk '{print $3}' | awk -e '{sub(/^origin\//, "", $0); print $0}')
+    for i in ${items}; do
+      echo "DELETING LOCAL BRANCH ${i}"
+      git branch -D "${i}"
+    done
+  done
+}
+function gitclone(){
+  git clone  --recurse-submodules $*
+  dir=$(echo "$1" | sed 's#.*/##' | sed 's/\.git$//')
+  cd $dir
+}
+function gitsub(){
+    git submodule $*
+}
+function gitpush(){
+  local remote=''
+  if [[ ${1} != '' ]]; then
+    remote=$1
+  else
+    remote='origin'
+  fi
+  echo "git push ${@:2} $remote $(git branch | grep '*' | awk '{print $2}')"
+  git push ${@:2} $remote $(git branch | grep '*' | awk '{print $2}')
+} # end function gitpush
+function gitmerge(){
+    if [[ $1 == '--help' ]]; then
+        echo '$1 - source branch if "" then use local'
+        echo '$2 - brnch to merge'
+        echo '$3 - git extra args'
+    fi
+    source=''
+    branch=''
+    extra_args=''
+    if [[ $1 != '' ]]; then
+        source="${1}/"
+    else
+        source=''
+    fi
+    if [[ $2 != '' ]]; then
+        branch="$2"
+    else
+        echo "no branch given for merge"
+        return 1
+    fi
+    if [[ $3 != '' ]]; then
+        extra_args=$3
+    fi
+    git merge ${source}${branch} ${extra_args}
+} # end function gitmerge
+function gitpull(){
+    source=''
+    branch=''
+    extra_args=''
+  if [[ $1 != '' ]]; then
+    source="$1"
+  else
+    source='origin'
+  fi
+  if [[ $2 != '' ]]; then
+    branch="$2"
+  else
+    branch=$(git branch | grep '*' | awk '{print $2}')
+  fi
+  if [[ $3 != '' ]]; then
+      extra_args=$3
+  fi
+  git pull ${source} ${branch} ${extra_args}
+  gitfetch
+} # end function gitpull
+function gitcheckoutb(){
+  # $1 = string branch
+  branch=$1
+  if [[ "$branch" == '' ]]; then
+    branch=$(git rev-parse --abbrev-ref HEAD)
+  fi
+  git checkout -b $branch
+  if [[ $? -eq 128 ]]; then
+    git checkout $branch
+  fi
+  git pull origin $branch
+  gitfetch
+} # end function gitcheckoutb
+function gitcommit(){
+    if [[ ${1} == '--help' ]]; then
+        echo 'gitcommit ${@:2} -a -m "<type>:<message>"'
+    fi
+  # $1 = commit message
+  branch="$(git rev-parse --abbrev-ref HEAD)"
+  gitadd
+  #git commit ${@:2} -a -m "$branch::${branch%%_[a-z|A-Z]*} $1"
+  git commit ${@:2} -a -m "$1: $branch"
+  gitfetch
+}
+function gitcommitp(){
+    if [[ ${1} == '--help' ]]; then
+        echo 'gitcommit ${@:2} "<type>:<message>"'
+    fi
+  # $1 = commit message
+  gitcommit "$1" ${@:2}
+  gitpush ''
+}
+function gitaddf(){
+  git add -Af
+}
+function gitadd(){
+  git add -A
+}
+function gittagrm(){
+    # $1 = string tag to delete
+    git tag -d $1
+    git push origin :refs/tags/$1
+} # end function gitrmtag
+function gittagl(){
+    git tag -l | sort -V
+}
+function gittaga(){
+    # $1 tag
+    # $2 comment
+    git tag -a $1 -m "$2"
+}
+function gitrelease(){
+    git release create $1
+    if [[ $? -eq 0 ]]; then
+        gitfetch
+    fi
+}
+function gittagp(){
+# $1 tag
+# $2 comment
+gittaga "$1" "$2"
+gitpushtag
+}
+function gittagd(){
+    # $1 tag
+    if [[ "${1}" == "--help" ]]; then
+        echo "gittagd - delete git tag and git hub release"
+        echo "\$1 - tag"
+    fi
+    git tag --delete $1
+    git push origin :refs/tags/$1
+    echo "deleting git hub release $1"
+    git release delete "$1"
+    gitfetch
+}
+function gitpushtag(){
+    git push --tags
+}
+function gitcheckoutm() {
+  git checkout master
+  gitpull
+  gitfetch
+} # end function gitcheckoutmaster
+function gitremote() {
+  src=$1
+  url=$2
+  if [[ "${src}" == '' ]]; then src='origin'; fi
+  echo "git remote set-url $src $url >/dev/null 2>&1"
+  git remote set-url $src $url >/dev/null 2>&1
+  if [[ $? -ne 0 ]]; then
+    echo "remote not found adding remote $src"
+    git remote add $src $url
+  fi
+}
+function gitcheckoutf(){
+    src=$1
+    path=$2
+    if [[ $# -eq 0 ]]; then
+        echo "gitcheckoutf -- checkout specific file from remote branch"
+        echo "arguments:"
+        echo "    \$1 - remote/branch"
+        echo "    \$2 - path/to/file"
+    fi
+    if [[ ! ($# -eq 2) || ${src} == '' ]]; then
+        path=$1
+        branch=$(gitbranchc)
+        src="origin/${branch}"
+    fi
+    if [[ ! -e ${path} ]]; then
+        echo "path to file ${path} does not exist"
+        return
+    fi
+    echo "performing: git checkout ${src} -- ${path}"
+    git checkout ${src} -- ${path}
+}
+function gitresetclean(){
+    if [[ ${1} == '--help' ]]; then 
+        clean clean --help
+        echo 'git reset --hard'
+        echo 'git clean -fxd'
+        echo "CAUTION: as above, but cleans untracked and ignored files through the entire repo (without :/, the operation affects only the current directory)"; return; 
+    fi
+    git reset --hard
+    git clean -fxd
+}
